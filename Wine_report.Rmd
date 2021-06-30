@@ -1,0 +1,425 @@
+---
+title: "Wine Quality"
+author: "Ankush Morey"
+date: "6/19/2021"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo = FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(MASS)
+library(faraway)
+library(stats)
+library(caret)
+library(nnet)
+library(tidyr)
+library(Hmisc)
+library(reshape)
+library(corrplot)
+library(RColorBrewer)
+library(ROCR)
+library(VGAM)
+```
+
+
+## Part A. Background and data exploration
+```{r}
+df <- read.csv('C:\\Users\\ankus\\Desktop\\Ankush\\BANA\\Statistical Models\\Case_Study\\winequality-red.csv',sep = ';')
+```
+
+### Summary Statistics
+```{r}
+dim(df)
+```
+```{r}
+#str(df)
+summary(df)
+```
+
+
+
+## Part B. Visualization and initial models for a binary response
+###Distribution of variables
+#### Histograms
+```{r fig.height=8, fig.width=8}
+df$excellent <- as.factor(ifelse(df$quality>=7,1,0))
+hist.data.frame(df)
+#table(df$excellent)
+```
+
+#### Boxplots
+```{r fig.width=7,fig.height=6}
+meltData <- melt(df)
+p <- ggplot(meltData, aes(factor(variable), value)) 
+p + geom_boxplot() + facet_wrap(~variable, scale="free")
+```
+
+#### Pie Chart
+```{r}
+ggplot(df, aes(x = "", fill = factor(excellent))) +
+  geom_bar(width = 1) + coord_polar("y", start=0) +
+  geom_text(data = as.data.frame(table(df$excellent)), 
+            aes(group = Var1, label = scales::percent(Freq / sum(Freq),accuracy = 0.01), 
+                y = Freq, fill = Var1), 
+            position = position_stack(vjust = 0.5)) + theme_void() + 
+  guides(fill=guide_legend(title="Excellent Wine"))
+
+```
+
+#### Association with response
+```{r}
+df$excellent<-as.numeric(df$excellent)
+M <-cor(df)
+cor(df,as.numeric(df$excellent))
+corrplot(M, type="upper", order="hclust",col=brewer.pal(n=8, name="RdYlBu"))
+df$excellent <- as.factor(ifelse(df$quality>=7,1,0))
+ggplot(data=df, mapping = aes(x =excellent, y = alcohol)) + 
+  geom_boxplot()
+ggplot(data=df, mapping = aes(x =excellent, y = residual.sugar)) + 
+  geom_boxplot()
+```
+
+#### Linear model
+```{r}
+df1<-df
+df1$quality<-NULL
+
+mod_linear <- lm(as.numeric(excellent)~.,df1)
+summary(mod_linear)
+```
+
+
+#### Logistic Model
+```{r}
+mod_log <- glm(excellent~.,family = binomial,data = df1)
+summary(mod_log)
+```
+
+## Part C
+#### Stepwise
+```{r}
+nullmodel=glm(excellent~1, family=binomial, data=df1)
+fullmodel=glm(excellent~., family=binomial, data=df1)
+```
+
+#### Forward selection wit AIC
+```{r}
+mod_step_f_aic <- step(nullmodel, scope=list(lower=nullmodel, upper=fullmodel), direction='forward')
+```
+excellent ~ alcohol + volatile.acidity + sulphates + total.sulfur.dioxide + 
+chlorides + fixed.acidity + residual.sugar + density
+
+#### Backward selection wit AIC
+```{r}
+mod_step_b_aic <- step(fullmodel)
+```
+excellent ~ fixed.acidity + volatile.acidity + residual.sugar + 
+chlorides + total.sulfur.dioxide + density + sulphates + alcohol
+
+#### Forward selection with BIC
+```{r}
+mod_step_f_bic <- step(nullmodel, scope=list(lower=nullmodel, upper=fullmodel), direction='forward',k=log(nrow(df1)))
+```
+excellent ~ alcohol + volatile.acidity + sulphates + total.sulfur.dioxide + 
+chlorides + fixed.acidity
+
+#### Backward selection wit BIC
+```{r}
+mod_step_b_bic <- step(fullmodel,k=log(nrow(df1)))
+```
+excellent ~ fixed.acidity + volatile.acidity + chlorides + total.sulfur.dioxide + sulphates + alcohol
+
+
+#### Stepwise selection
+```{r}
+model_step_s <- step(nullmodel, scope=list(lower=nullmodel, upper=fullmodel), direction='both')
+excellent ~ alcohol + volatile.acidity + sulphates + total.sulfur.dioxide + 
+chlorides + fixed.acidity + residual.sugar + density
+```
+
+#### Chi square test
+```{r}
+summary(mod_step_f_bic)
+```
+
+#### Deviance
+```{r}
+dev=deviance(mod_step_f_bic)-deviance(fullmodel)
+```
+
+#### Difference between degrees of freedom
+```{r}
+diff_df = mod_step_f_bic$df.residual - fullmodel$df.residual 
+pchisq(dev,diff_df,lower=F)
+anova(mod_step_f_bic,fullmodel,test="Chisq")
+anova(mod_step_f_aic,fullmodel,test="Chisq")
+drop1(fullmodel,test='Chi')
+```
+Chi square test shows p-value less than significance, we reject the null hypothesis, confirming the models are different. drop1 chi square test exactly the same model as AIC
+excellent ~ alcohol + volatile.acidity + sulphates + total.sulfur.dioxide + 
+    chlorides + fixed.acidity + residual.sugar + density
+
+#### Collinearity
+
+```{r}
+df_cor<-df1
+df_cor$quality<-NULL
+df_cor$excellent=as.numeric(df_cor$excellent)
+m=cor(df_cor)
+m
+corrplot(m, type="upper", order="hclust",col=brewer.pal(n=8, name="RdYlBu"))
+```
+
+We see multicollinearity in data. pH and fixed.acidity have high negative correlation. Volatile.acidity and citric.acid are correlated. Citric.acid and fixed.acidity are also correlated. Density and fixed.acidity are also correlated. Citric.acid and pH also display negative correlation. Total.sulfur.dioxide and free.sulfur.dioxide are also correlated.
+From these variables, we have the following pairs in our model:
+
+excellent ~ alcohol + volatile.acidity + sulphates + total.sulfur.dioxide + 
+    chlorides + fixed.acidity + residual.sugar + density
+
+Density and fixed acidity.
+
+Removing density, as fixed acidity is correlated with citric.acid, density, and pH, thus it captures information of all these variables.
+Final model:
+
+excellent ~ alcohol + volatile.acidity + sulphates + total.sulfur.dioxide + 
+    chlorides + fixed.acidity + residual.sugar
+
+
+
+```{r}
+mod_logf <- glm(excellent~alcohol + volatile.acidity + sulphates + total.sulfur.dioxide +chlorides + fixed.acidity + residual.sugar,family = binomial,data = df1)
+summary(mod_logf)
+```
+
+
+We have alcohol and residual sugar in our final model.
+
+#### Confusion Matrix with cutoff p= 0.5
+```{r}
+pred<- predict(mod_logf, newdata = df1, type="response")
+conf_sym <-table(df$excellent, (pred > (0.5)), dnn=c("Truth","Predicted"))
+conf_sym
+```
+#### Specificity (True Negative Rate)
+```{r}
+Specificity_log <- conf_sym[1]/(conf_sym[1]+conf_sym[3])
+Specificity_log
+```
+#### Sensitivity (True Positive Rate)
+```{r}
+Sensitivity_log <- conf_sym[4]/(conf_sym[2]+conf_sym[4])
+Sensitivity_log
+```
+We need to lower the threshold to decrease the number of False Negatives.
+
+#### ROC Curve
+```{r}
+predic <- prediction(pred, df$excellent)
+perf <- performance(predic,"tpr","fpr")
+plot(perf,colorize=TRUE)
+```
+AUC
+```{r}
+# auc.tmp <- performance(predic,"auc")
+# auc <- as.numeric(auc.tmp@y.values)
+# auc
+unlist(slot(performance(predic, "auc"), "y.values"))
+```
+#### Prediction on 1st bottle
+```{r}
+new_df1<-(df[1,])
+predict(mod_logf,new_df1,type='response')
+predict(mod_logf,newdata=new_df1,type="link") ### Linear predictor
+#predict(mod_logf,newdata=new.ind,type="response") ### Probability
+predict(mod_logf,newdata=new_df1,type="response",se=T) ### Probability
+
+### Predict the value with its standard error
+conf_interval_res <-c(0.009605323-1.96*0.0024676,0.009605323+1.96*0.0024676  )
+conf_interval_res
+predict(mod_logf,newdata=new_df1,type="link",se=T)
+ilogit(c(-4.635786-1.96*0.2593907,-4.635786+1.96*0.2593907))
+ilogit(c(-4.635786))
+```
+#### Prediction on 268th bottle
+```{r}
+new_df2<-(df[268,])
+predict(mod_logf,new_df2,type='response')
+predict(mod_logf,newdata=new_df2,type="link") ### Linear predictor
+#predict(mod_logf,newdata=new.ind,type="response") ### Probability
+predict(mod_logf,newdata=new_df2,type="response",se=T) ### Probability
+
+### Predict the value with its standard error
+conf_interval_res <-c(0.7527199-1.96*0.03712494,0.7527199+1.96*0.03712494  )
+conf_interval_res
+predict(mod_logf,newdata=new_df2,type="link",se=T)
+ilogit(c(1.113171-1.96*0.1994542,1.113171+1.96*0.1994542))
+```
+PArt D: Link Function and Dispersion Parameter
+
+### Probit Model
+```{r}
+mod_pro <- glm(excellent~alcohol + volatile.acidity + sulphates + total.sulfur.dioxide +chlorides + fixed.acidity + residual.sugar,family = binomial(link='probit'),data = df1)
+summary(mod_pro)
+```
+#### Confusion Matrix with cutoff p= 0.5
+```{r}
+predp<- predict(mod_pro, newdata = df1, type="response")
+conf_symp <-table(df$excellent, (predp > (0.5)), dnn=c("Truth","Predicted"))
+conf_symp
+```
+#### Specificity (True Negative Rate)
+```{r}
+Specificity_pro <- conf_symp[1]/(conf_symp[1]+conf_symp[3])
+Specificity_pro
+```
+#### Sensitivity (True Positive Rate)
+```{r}
+Sensitivity_pro <- conf_symp[4]/(conf_symp[2]+conf_symp[4])
+Sensitivity_pro
+```
+We need to lower the threshold to decrease the number of False Negatives.
+
+#### ROC Curve
+```{r}
+predic_p <- prediction(predp, df$excellent)
+perf_p <- performance(predic_p,"tpr","fpr")
+plot(perf_p,colorize=TRUE)
+```
+AUC
+```{r}
+# auc.tmp <- performance(predic,"auc")
+# auc <- as.numeric(auc.tmp@y.values)
+# auc
+unlist(slot(performance(predic_p, "auc"), "y.values"))
+```
+### Complementary Log Log Model
+```{r}
+mod_clog <- glm(excellent~alcohol + volatile.acidity + sulphates + total.sulfur.dioxide +chlorides + fixed.acidity + residual.sugar,family = binomial(link='cloglog'),data = df1)
+summary(mod_clog)
+```
+#### Confusion Matrix with cutoff p= 0.5
+```{r}
+predc<- predict(mod_clog, newdata = df1, type="response")
+conf_symc <-table(df$excellent, (predc > (0.5)), dnn=c("Truth","Predicted"))
+conf_symc
+```
+#### Specificity (True Negative Rate)
+```{r}
+Specificity_clog <- conf_symc[1]/(conf_symc[1]+conf_symc[3])
+Specificity_clog
+```
+#### Sensitivity (True Positive Rate)
+```{r}
+Sensitivity_clog <- conf_symc[4]/(conf_symc[2]+conf_symc[4])
+Sensitivity_clog
+```
+We need to lower the threshold to decrease the number of False Negatives.
+
+#### ROC Curve
+```{r}
+predic_c <- prediction(predc, df$excellent)
+perf_c <- performance(predic_c,"tpr","fpr")
+plot(perf_c,colorize=TRUE)
+```
+AUC
+```{r}
+# auc.tmp <- performance(predic,"auc")
+# auc <- as.numeric(auc.tmp@y.values)
+# auc
+unlist(slot(performance(predic_c, "auc"), "y.values"))
+```
+
+```{r}
+BIC(mod_logf)
+BIC(mod_pro)
+BIC(mod_clog)
+```
+
+##Dispersion?
+```{r}
+sigma.squared <- sum(residuals(mod_logf,type='pearson')^2)/(nrow(df1)-8)
+sigma.squared
+summary(mod_logf)
+summary(mod_logf,dispersion=sigma.squared)
+```
+The Dispersion parameter is less than 1, implying there is no correlation between the wines. The parameter estimates remains same, whereas the Std. Error and p-values have changed.
+The inference here is, with this new model 
+
+## Part E: Modeling the wine quality as a multinomial variable with order
+
+```{r}
+ggplot(df,aes(quality)) + geom_histogram()
+```
+```{r}
+table(df$quality) 
+```
+There are 6 categories, wherein quality 3 and quality 8 are sparse. We can merge quality 3 and 4. Also we can merge quality 7 and 8.
+Final number of categories = 4.
+i.e. Category 4, 5, 6 and 7.
+
+```{r}
+df2<-df
+df2$excellent<-NULL
+df2$quality<-as.factor(df2$quality)
+levels(df2$quality) <- c("4", "4", "5", "6", "7", "7")
+```
+
+```{r}
+table(df2$quality)
+```
+
+Kendal Tau Correlation
+```{r}
+df2_cor<-df2
+df2_cor$quality<-as.numeric(df2_cor$quality)
+kendal <- cor(df2_cor,df2_cor$quality,method='kendall')
+kendal1 <- as.data.frame(kendal)
+kendal1$V2 <- abs(kendal1$V1)
+kendal1[with(kendal1, order(-V2)), ]
+```
+```{r}
+levels(df2$quality)
+```
+
+```{r}
+mod_multi_log <- vglm(ordered(quality)~ volatile.acidity + alcohol+sulphates +  total.sulfur.dioxide + chlorides+ citric.acid  ,family=cumulative(parallel = TRUE),df2)
+summary(mod_multi_log)
+```
+
+#### Confusion Matrix
+
+
+```{r}
+predicted_df <- as.data.frame(predict(mod_multi_log,type='response'))
+pred_multi <- colnames(predicted_df)[apply(predicted_df,1,which.max)]
+table(df2$quality,as.numeric(pred_multi))
+```
+
+#### Prediction on new values
+```{r}
+predict(mod_multi_log,new_df1,type='response')
+```
+
+```{r}
+predict(mod_multi_log,new_df2,type='response')
+```
+
+```{r}
+a<-predict(mod_multi_log,new_df2,type='link')
+a
+```
+```{r}
+ilogit(a[1])
+ilogit(a[2])
+ilogit(a[3])
+1-ilogit(a[1])-ilogit(a[2])-ilogit(a[3])
+```
+
+Here we can see that we have very close results if the wine is excellent or not using Multinomial and Logistic regression. Please refer the word file for detailed report with explanation.
